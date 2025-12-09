@@ -1,22 +1,18 @@
-// main.cpp
-// Purpose: Entry point. Students will implement CLI parsing, map loading/generation,
-// algorithm dispatch, and visualization calls. For now, this prints TODOs.
-//REMOVE LATER, 
-/*
-int main(int argc, char* argv[]) {
-    std::cout << "Pathfinding Visualizer Starter\n";
-    std::cout << "TODO: Implement CLI parsing (--algo, --map, --generate, etc.)\n";
-    std::cout << "TODO: Load or generate a grid map. Validate S/G on open cells.\n";
-    std::cout << "TODO: Run selected algorithm(s): BFS, Dijkstra, A*.\n";
-    std::cout << "TODO: Render ASCII output with visited (+) and path (*), preserving S/G and walls.\n";
-    return 0;
-}
-    */
-#include <iostream> 
+#include <iostream>
 #include <fstream>
 #include <vector>
 #include <string>
 #include <sstream>
+#include <queue>
+#include <algorithm>
+#include <chrono>
+
+//hpp files
+///
+#include "algo_dijkstra.hpp"
+#include "algo_astar.hpp"
+
+
 
 using namespace std;
 
@@ -107,47 +103,8 @@ bool LoadMap(const string &filename, Grid &grid){
     if(grid.IsBlocked(grid.goalRow, grid.goalCol)) return false;
 
     return true;
-}//------------------------------------------------------------------------------------------------------------------
-//
-//
-void OverlayAndPrint(const Grid &grid, const BFSResult &result, const string &algoName){
-    vector<char> display = grid.cells;
-
-    // Mark visited
-    for(int id=0; id < (int)display.size(); ++id){
-        if(id != grid.ToId(grid.startRow, grid.startCol) &&
-           id != grid.ToId(grid.goalRow, grid.goalCol) &&
-           display[id] == '.'){
-            display[id] = '+';
-        }
-    }
-
-    // Mark path
-    for(int id : result.path){
-        if(id != grid.ToId(grid.startRow, grid.startCol) &&
-           id != grid.ToId(grid.goalRow, grid.goalCol) &&
-           display[id] != '#'){
-            display[id] = '*';
-        }
-    }
-
-    cout << "=== " << algoName << " ===\n";
-    for(int r=0;r<grid.height;r++){
-        for(int c=0;c<grid.width;c++){
-            int id = r*grid.width + c;
-            if(r==grid.startRow && c==grid.startCol) cout << 'S';
-            else if(r==grid.goalRow && c==grid.goalCol) cout << 'G';
-            else cout << display[id];
-        }
-        cout << "\n";
-    }
-
-    cout << "Found: " << (result.found ? "yes" : "no")
-         << " | Visited: " << result.visitedCount
-         << " | PathLen: " << result.pathLen
-         << " | Cost: " << result.pathLen
-         << "\n\n";
 }
+
 
 
 //------------------------------------------------------------------------------------------------------
@@ -160,9 +117,75 @@ struct BFSResult {
     bool found = false;
     int pathLen = 0;
     int visitedCount = 0;
+    long long timeUS = 0;
     vector<int> path;
+    vector<bool> visited; //New, stores visited
 };
+//revised
+BFSResult BFS(const Grid &grid) {
+    using namespace std::chrono;
 
+    auto t0 = high_resolution_clock::now();
+
+    int start = grid.ToId(grid.startRow, grid.startCol);
+    int goal  = grid.ToId(grid.goalRow, grid.goalCol);
+
+    vector<bool> visited(grid.width * grid.height, false);
+    vector<int> parent(grid.width * grid.height, -1);
+
+    queue<int> q;
+    q.push(start);
+    visited[start] = true;
+
+    int visitedCount = 0;
+    bool found = false;
+
+    while(!q.empty()){
+        int current = q.front(); 
+        q.pop();
+        visitedCount++;
+
+        if(current == goal){
+            found = true;
+            break;
+        }
+
+        auto [r, c] = grid.FromId(current);
+        for(int neighbor : grid.GetNeighbors(r, c)){
+            if(!visited[neighbor]){
+                visited[neighbor] = true;
+                parent[neighbor] = current;
+                q.push(neighbor);
+            }
+        }
+    }
+
+    // Reconstruct path
+    vector<int> path;
+    if(found){
+        int node = goal;
+        while(node != -1){
+            path.push_back(node);
+            node = parent[node];
+        }
+        reverse(path.begin(), path.end());
+    }
+
+    auto t1 = high_resolution_clock::now();
+    long long us = duration_cast<microseconds>(t1 - t0).count();
+
+    BFSResult result;
+    result.found = found;
+    result.pathLen = (int)path.size();
+    result.visitedCount = visitedCount;
+    result.timeUS = us;
+    result.path = path;
+    result.visited = visited;
+    return result;
+}
+
+//Original
+/*
 BFSResult BFS(const Grid &grid) {
     int start = grid.ToId(grid.startRow, grid.startCol);
     int goal  = grid.ToId(grid.goalRow, grid.goalCol);
@@ -194,7 +217,8 @@ BFSResult BFS(const Grid &grid) {
                 q.push(neighbor);
             }
         }
-    }//recon
+    }
+//recon
     vector<int> path;
     if(found){
         int node = goal;
@@ -207,8 +231,53 @@ BFSResult BFS(const Grid &grid) {
 
     return BFSResult{found, (int)path.size(), visitedCount, path};
 }
+*/
 
+//------------------------------------------------------------------------------------------------------------------
+//
+//
+void OverlayAndPrint(const Grid &grid, const BFSResult &result, const string &algoName){
+    vector<char> display = grid.cells;
 
+    // mark visited correctly
+    for(int id = 0; id < (int)display.size(); id++){
+        if(result.visited[id] &&
+           id != grid.ToId(grid.startRow, grid.startCol) &&
+           id != grid.ToId(grid.goalRow, grid.goalCol) &&
+           display[id] == '.')
+        {
+            display[id] = '+';
+        }
+    }
+
+    // mark final path
+    for(int id : result.path){
+        if(id != grid.ToId(grid.startRow, grid.startCol) &&
+           id != grid.ToId(grid.goalRow, grid.goalCol) &&
+           display[id] != '#')
+        {
+            display[id] = '*';
+        }
+    }
+
+    cout << "=== " << algoName << " ===\n";
+    for(int r = 0; r < grid.height; r++){
+        for(int c = 0; c < grid.width; c++){
+            int id = r * grid.width + c;
+            if(r == grid.startRow && c == grid.startCol) cout << 'S';
+            else if(r == grid.goalRow && c == grid.goalCol) cout << 'G';
+            else cout << display[id];
+        }
+        cout << "\n";
+    }
+
+    cout << "Found: " << (result.found ? "yes" : "no")
+         << " | Visited: " << result.visitedCount
+         << " | PathLen: " << result.pathLen
+         << " | Cost: " << result.pathLen
+         << " | Time(us): " << result.timeUS
+         << "\n\n";
+}
 
 
     //=------------------------------------------------------------------------------------------
@@ -220,7 +289,7 @@ int main(int argc, char** argv){
 //ORIGINAL - USE FOR TESTING
 //Basic errer handling
 /*
-        if(argc < 2){
+    	if(argc < 2){
         cout << "Usage: " << argv[0] << " <map_file>\n";
         return 1;
     }
@@ -267,12 +336,20 @@ int main(int argc, char** argv){
 //    cout << "\nSelected algorithm: " << algo << "\n";
     // BFS/Dijkstra/A* will go here
 
+//Hope you dont need notes on what this does
 
-
-
+ if(algo=="bfs" || algo=="all"){
+        BFSResult bfsResult = BFS(grid);
+        OverlayAndPrint(grid, bfsResult, "BFS");
+    }
+if(algo=="dijkstra" || algo=="all"){
+    RunResult dijResult = RunDijkstra(grid);
+    OverlayAndPrint(grid, dijResult, "Dijkstra");
+}
 
 return 0;
 }
+
 
 
 
